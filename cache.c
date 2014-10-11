@@ -43,7 +43,9 @@ int cachemanager(enum query q, request r){
 				temp1 = here->prev;
 				temp2 = here->next;
 				if(temp1!=NULL)temp1->next = temp2;
+				else head=here->next;
 				if(temp2!=NULL)temp2->prev = temp1;
+				else here->prev->prev=NULL;
 				printf("A\n");
 				free(here);
 				return 0;
