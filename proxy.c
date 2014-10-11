@@ -1,0 +1,383 @@
+#include <stdio.h>
+#include <netinet/in.h>
+#include <sys/types.h>
+#include <sys/socket.h>
+#include <netdb.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+#include <time.h>
+
+enum query {INSERT,DELETE,HITMISS,SHOW};
+int root, fdmax;
+int npages=0;
+int mpages=10;
+fd_set tree;
+
+typedef struct request{
+	char * address;
+	char * resource;
+	unsigned long expires;
+	char * accessed;
+} request;
+
+typedef struct page{
+	request req;
+	char *modified;
+	struct page *next;
+	struct page *prev;
+} page;
+
+page *head = NULL;
+
+void fixname(char * filename){
+	char* x = filename;
+	char* y = filename;
+	while(*y!=0){
+		*x=*y++;
+		if(*x!= ' ') x++;
+	}
+	*x=0;
+}
+
+void url2filename(char * filename, request req){
+	char resource[strlen(req.resource)];
+	int i;
+	char *s1 = "/";
+	char *s2 = "_";
+	strcpy(filename, req.address);
+	strcpy(resource, req.resource);
+	for(i=0;i<strlen(resource);i++) {
+		if(strncmp(resource+i,s1,1)==0) strncpy(resource+i,s2,strlen(s2));
+	}
+	strcat(filename, resource);
+	fixname(filename);
+}
+
+void serveto(request req, int branch){
+	char * filename = malloc(strlen(req.address)+strlen(req.resource)+1);
+	char buffer[BUFSIZ];
+	url2filename(filename, req);
+	FILE *file = fopen(filename, "r");
+	if(file!=NULL){
+		while(fread(buffer,1,BUFSIZ,file)>0){
+			if((send(branch, buffer, strlen(buffer), 0))==-1){
+				perror("Serve failed!");
+			}
+		}
+	}
+	FD_CLR(branch,&tree);
+	close(branch);
+}
+
+int cachemanager(enum query q, request r){
+	page *here;
+	here = (page *)malloc(sizeof(page));
+	page *temp1,*temp2;
+	switch(q){
+		case INSERT:
+		here->req.address = r.address;
+		here->req.resource = r.resource;
+
+		time_t now;
+		time(&now);
+		struct tm *tme = gmtime(&now);		
+		char buffer[80];
+		strftime(buffer, 80, "%a, %d %b %Y %H:%M:%S %Z",tme);
+		printf("%s\n", buffer);
+		here->req.accessed = buffer; // something wrong; this updates all entries in cache
+		//here->req.accessed = "Wed, 19 Oct 2005 10:50:00 GMT";
+		if(head==NULL) head=here;
+		else{
+			head->prev = here;
+			here->next = head;
+			here->prev = NULL;
+			head = here;
+		}
+		npages++;
+		if(npages>mpages){
+			here=head;
+			int h;
+			for(h=0;h<mpages-1;h++)
+				here = here->next;
+			here->next = NULL;
+		}
+		return 0;
+		case DELETE:
+		here = head;
+		while(here!=NULL){
+			if(!strcmp(here->req.address,r.address) && !strcmp(here->req.resource,r.resource)){
+				temp1 = here->prev;
+				temp2 = here->next;
+				if(temp1!=NULL)temp1->next = temp2; else head = temp2;
+				if(temp2!=NULL)temp2->prev = temp1;
+				return 0;
+			}
+			here = here->next;
+		}
+		return 1;
+		case HITMISS:
+		here = head;
+		while(here!=NULL){
+			if(!strcmp(here->req.address,r.address) && !strcmp(here->req.resource,r.resource)){
+				time_t now;
+				time(&now);
+				struct tm *tme = gmtime(&now);
+				temp1 = here->prev;
+				temp2 = here->next;
+				if(temp1!=NULL)temp1->next = temp2; else head = temp2;
+				if(temp2!=NULL)temp2->prev = temp1;
+				if(here->req.expires==-1 || mktime(tme) >= here->req.expires) return 1;
+				else{
+					head->prev = here;
+					here->next = head;
+					here->prev = NULL;
+					head = here;
+					cachemanager(SHOW,r);
+					return 0;
+				}
+			}
+			here = here->next;
+		}
+		return 1;
+		case SHOW:
+		here = head;
+		while(here!=NULL){
+			printf(">>%s:%s:%lu:%s\n", here->req.address, here->req.resource, here->req.expires, here->req.accessed);
+			here = here->next;
+		}
+		return 0;
+		default:
+		return 1;
+	}
+}
+
+//----
+void patchback(int sroot, request req, int branch){
+	char * filename = malloc(strlen(req.address)+strlen(req.resource)+1);
+	url2filename(filename, req);
+	int nbytes;
+	int iscode=0;
+	int isexpire=0;
+	char *code = NULL;
+	char *expires = NULL;
+	char *token;
+
+	char content[BUFSIZ];
+	memset(content,0,BUFSIZ);
+	FILE *file = fopen("temp","w");
+	while((nbytes = recv(sroot, content, BUFSIZ, 0)) > 0) {
+		if(iscode==0){
+			token = strtok(strdup(content),"\r\n");
+			*(token+12)='\0';
+			code=token+9;
+			iscode=1;
+		}
+		if(isexpire==0){
+			token = strtok(strdup(content),"\r\n");
+			while(token!=NULL){
+				if(strncmp(token, "Expires: ", 9)==0) {
+					expires = token+9;
+					isexpire = 1;
+				}
+				token = strtok(NULL, "\r\n");
+			}
+		}
+		fprintf(file,"%s",content);
+		memset(content, 0, BUFSIZ);
+	}
+
+	struct tm tme;
+	time_t time;
+	if(expires!=NULL) strptime(expires, "%d %b %Y %H:%M:%S", &tme);
+	tme.tm_isdst=0;
+	time = mktime(&tme);
+	req.expires = (long)time;
+	close(sroot);
+	fclose(file);
+	//check check
+	if(strcmp(code,"304")!=0) {
+		printf("%s\n", code);
+		if(access( filename, F_OK ) != -1) if(remove(filename)!=0) printf("Cache: File delete error!\n");
+		if(rename("temp",filename)!=0) printf("Cache: File rename error!\n");
+	}
+	else printf("304 not modified\n");
+	if(nbytes < 0) {
+		perror("RECV Error!\n");
+		exit(0);
+	}
+	else {
+		cachemanager(INSERT,req);
+		cachemanager(SHOW,req);
+		serveto(req, branch);
+	}
+}
+
+void dispatch(int sroot, char *message, request req, int branch){
+	if((send(sroot, message, strlen(message), 0))==-1){
+		perror("GET Failed!");
+		exit(1);
+	}
+	else patchback(sroot, req, branch);
+	memset(message,0,strlen(message));
+}
+
+void GETdressed(int sroot, request req, int branch){
+	char *resource = req.resource;
+	if(resource==NULL) resource = "";
+	else if(resource[0]=='/') resource++;
+	char * message;
+	if(strncmp(req.accessed,"Never",4)!=0){
+		char *template = "GET /%s HTTP/1.0\r\nHost: %s\r\nUser-Agent: %s\r\nIf-Modified-Since: %s\r\n\r\n";
+		message = (char *)malloc(strlen(template)-6+strlen(req.address)+strlen(resource)+strlen("ECEN 602")+strlen(req.accessed));
+		sprintf(message, template, resource, req.address, "ECEN 602", req.accessed);
+	}
+	else{
+		char *template = "GET /%s HTTP/1.0\r\nHost: %s\r\nUser-Agent: %s\r\n\r\n";
+		message = (char *)malloc(strlen(template)-5+strlen(req.address)+strlen(resource)+strlen("ECEN 602"));
+		sprintf(message, template, resource, req.address, "ECEN 602");
+	}
+	dispatch(sroot, message, req, branch);
+}
+
+void getfor(request req, int branch){
+	int rv, sroot;
+	struct addrinfo hints, *servinfo, *p;
+	memset(&hints, 0, sizeof hints);
+	hints.ai_family = AF_INET;
+	hints.ai_socktype = SOCK_STREAM;
+	if ((rv = getaddrinfo(req.address, "80", &hints, &servinfo)) != 0) {
+		fprintf(stderr, "getaddrinfo: %s\n", gai_strerror(rv));
+		exit(EXIT_FAILURE);
+	}
+
+	for(p = servinfo; p != NULL; p = p->ai_next) {
+		if ((sroot = socket(p->ai_family, p->ai_socktype, p->ai_protocol)) == -1) {
+			perror("client: socket");
+			continue;
+		}
+		if (connect(sroot, p->ai_addr, p->ai_addrlen) == -1) {
+			close(sroot);
+			perror("client: connect");
+			continue;
+		}
+		break;
+	}
+	freeaddrinfo(servinfo);
+	GETdressed(sroot, req, branch);
+}
+
+//----
+
+void nexus(char const *target[]){
+	struct addrinfo hints, *servinfo, *p;
+	int rv, yes=1;
+	memset(&hints, 0, sizeof hints);
+	hints.ai_family = AF_INET;
+	hints.ai_socktype = SOCK_STREAM;
+	hints.ai_flags = AI_PASSIVE;
+	if ((rv = getaddrinfo(target[1], target[2], &hints, &servinfo)) != 0) {
+		fprintf(stderr, "getaddrinfo: %s\n", gai_strerror(rv));
+		exit(EXIT_FAILURE);
+	}
+	for(p = servinfo; p != NULL; p = p->ai_next) {
+		if ((root = socket(p->ai_family, p->ai_socktype,p->ai_protocol)) == -1) {
+			perror("server: socket");
+			continue;
+		}
+		if (setsockopt(root, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(int)) == -1) {
+			perror("setsockopt");
+			exit(EXIT_FAILURE);
+		}
+		if (bind(root, p->ai_addr, p->ai_addrlen) == -1) {
+			close(root);
+			perror("server: bind");
+			continue;
+		}
+		break;
+	}
+	if (p == NULL) {
+		fprintf(stderr, "server: failed to bind\n");
+		exit(EXIT_FAILURE);
+	}
+	freeaddrinfo(servinfo); // all done with this structure
+	if (listen(root, 10) == -1) {
+		perror("listen");
+		exit(EXIT_FAILURE);
+	}
+	FD_SET(root, &tree);
+}
+
+request decode(char abuffer[]){
+	char *token;
+	token = strtok(strdup(abuffer),"\r\n");
+	struct request req;
+	while(token != NULL) 
+	{
+		char *line = malloc(sizeof(char) * strlen(token));
+		line = token;
+		if(strncmp(line,"GET",3)==0) {
+			char * getline = line+4;
+			getline[strlen(getline)-8] = '\0';
+			req.resource = malloc(strlen(getline));
+			strncpy(req.resource, getline, strlen(getline));
+		}
+		else if(strncmp(line,"Host: ",5)==0) req.address = line+6;
+		token = strtok(NULL, "\r\n");
+	}
+	fixname(req.resource);
+	fixname(req.address);
+	req.expires=-1;
+	req.accessed="Never";
+	return req;
+}
+
+int main(int argc, char const *argv[]){
+	if(argc==3){
+		int branch, gold, c;
+		fd_set reads;
+		struct sockaddr_storage address;
+
+		nexus(argv);
+		printf("Proxy server ready!\n");
+		fdmax = root;
+
+		for(;;){
+			reads = tree;
+			if(select(fdmax+1, &reads, NULL,NULL,NULL)==-1){
+				perror("select");
+				exit(EXIT_FAILURE);
+			}
+
+			for(c=0;c<=fdmax;c++){
+				char abuffer[BUFSIZ];
+				if(FD_ISSET(c, &reads)){
+					if(c==root){
+						socklen_t len = sizeof address;
+						if((branch = accept(root,(struct sockaddr *)&address,&len))!=-1){
+							FD_SET(branch, &tree);
+							if(branch > fdmax) fdmax = branch;
+						}
+					}
+					else{
+						if((gold=read(c,abuffer,BUFSIZ))>0){
+							if(strncmp(abuffer,"GET",3)==0){
+								request req = decode(abuffer);
+								if(cachemanager(HITMISS,req)==0) serveto(req,c);
+								else getfor(req,c);
+							}
+						}
+						else{
+							if(gold==0) printf("Offline.\n");
+							else perror("recv");
+							close(c);
+							FD_CLR(branch,&tree);
+						}
+					}
+				}
+			}
+		}
+	}
+	else printf("Format: %s <server> <port>\n", argv[0]);
+	return 0;
+}
