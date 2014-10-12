@@ -148,7 +148,7 @@ int cachemanager(enum query q, request r){
 		case SHOW:
 		here = head;
 		while(here!=NULL){
-			printf(">>%s:%s:%lu:%s\n", here->req.address, here->req.resource, here->req.expires, here->req.accessed);
+			printf(">> %s | %s | %lu | %s |\n", here->req.address, here->req.resource, here->req.expires, here->req.accessed);
 			here = here->next;
 		}
 		return 0;
@@ -194,15 +194,18 @@ void patchback(int sroot, request req, int branch){
 	}
 
 	struct tm tme;
+	bzero((void *)&tme, sizeof(struct tm));
 	time_t time;
-	printf("%s\n", expires);
-	if(expires!=NULL) strptime(expires, "%d %b %Y %H:%M:%S", &tme);
-	//tme.tm_isdst=0;
-	time = mktime(&tme);
-	req.expires = (long) time;
+	if(expires!=NULL && strcmp(expires,"-1")!=0) {
+		strptime(expires, "%a, %d %b %Y %H:%M:%S %Z", &tme);
+		time = mktime(&tme);
+		req.expires = (long)time;
+	}
+	else req.expires = 0;
+	
 	close(sroot);
 	fclose(file);
-	
+
 	if(strcmp(code,"304")!=0) {
 		if(access( filename, F_OK ) != -1) if(remove(filename)!=0) printf("Cache: File delete error!\n");
 		if(rename(str,filename)!=0) printf("Cache: File rename error!\n");
@@ -250,6 +253,7 @@ void GETdressed(int sroot, request req, int branch){
 		message = (char *)malloc(strlen(template)-5+strlen(req.address)+strlen(resource)+strlen("ECEN 602"));
 		sprintf(message, template, resource, req.address, "ECEN 602");
 	}
+	
 	dispatch(sroot, message, req, branch);
 }
 
