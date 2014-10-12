@@ -6,9 +6,10 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#define __USE_XOPEN 1
 #include <time.h>
 
-enum query {INSERT,DELETE,HITMISS,SHOW};
+enum query {INSERT,HITMISS,DELETE,SHOW};
 int root, fdmax;
 int npages=0;
 int mpages=10;
@@ -17,7 +18,7 @@ fd_set tree;
 typedef struct request{
 	char * address;
 	char * resource;
-	unsigned long expires;
+	long expires;
 	char * accessed;
 } request;
 
@@ -73,21 +74,25 @@ void serveto(request req, int branch){
 int cachemanager(enum query q, request r){
 	page *here;
 	here = (page *)malloc(sizeof(page));
+	
 	page *temp1,*temp2;
 	switch(q){
 		case INSERT:
 		here->req.address = r.address;
 		here->req.resource = r.resource;
+		here->req.expires = r.expires; // !
 
 		time_t now;
 		time(&now);
 		struct tm *tme = gmtime(&now);		
-		char buffer[80];
+		char * buffer = malloc(80*sizeof(char));
 		strftime(buffer, 80, "%a, %d %b %Y %H:%M:%S %Z",tme);
-		printf("%s\n", buffer);
-		here->req.accessed = buffer; // something wrong; this updates all entries in cache
-		//here->req.accessed = "Wed, 19 Oct 2005 10:50:00 GMT";
-		if(head==NULL) head=here;
+		here->req.accessed = buffer;
+		if(head==NULL) {
+			here->next = NULL;
+			here->prev = NULL;
+			head=here;
+		}
 		else{
 			head->prev = here;
 			here->next = head;
@@ -95,12 +100,15 @@ int cachemanager(enum query q, request r){
 			head = here;
 		}
 		npages++;
-		if(npages>mpages){
+
+		if(npages==mpages+1){
 			here=head;
 			int h;
 			for(h=0;h<mpages-1;h++)
 				here = here->next;
 			here->next = NULL;
+			npages = mpages;
+			printf("%d\n", npages);
 		}
 		return 0;
 		case DELETE:
@@ -111,6 +119,7 @@ int cachemanager(enum query q, request r){
 				temp2 = here->next;
 				if(temp1!=NULL)temp1->next = temp2; else head = temp2;
 				if(temp2!=NULL)temp2->prev = temp1;
+				npages--;
 				return 0;
 			}
 			here = here->next;
@@ -119,21 +128,17 @@ int cachemanager(enum query q, request r){
 		case HITMISS:
 		here = head;
 		while(here!=NULL){
-			if(!strcmp(here->req.address,r.address) && !strcmp(here->req.resource,r.resource)){
+			if(!strcmp(here->req.address,r.address) && !strcmp(here->req.resource,r.resource))
+			{
 				time_t now;
 				time(&now);
 				struct tm *tme = gmtime(&now);
-				temp1 = here->prev;
-				temp2 = here->next;
-				if(temp1!=NULL)temp1->next = temp2; else head = temp2;
-				if(temp2!=NULL)temp2->prev = temp1;
-				if(here->req.expires==-1 || mktime(tme) >= here->req.expires) return 1;
+				if(here->req.expires==0 || mktime(tme) >= here->req.expires) cachemanager(DELETE,r);
 				else{
 					head->prev = here;
 					here->next = head;
 					here->prev = NULL;
 					head = here;
-					cachemanager(SHOW,r);
 					return 0;
 				}
 			}
@@ -152,7 +157,6 @@ int cachemanager(enum query q, request r){
 	}
 }
 
-//----
 void patchback(int sroot, request req, int branch){
 	char * filename = malloc(strlen(req.address)+strlen(req.resource)+1);
 	url2filename(filename, req);
@@ -165,7 +169,9 @@ void patchback(int sroot, request req, int branch){
 
 	char content[BUFSIZ];
 	memset(content,0,BUFSIZ);
-	FILE *file = fopen("temp","w");
+	char str[10];
+	sprintf(str,"temp%d",branch);
+	FILE *file = fopen(str,"w");
 	while((nbytes = recv(sroot, content, BUFSIZ, 0)) > 0) {
 		if(iscode==0){
 			token = strtok(strdup(content),"\r\n");
@@ -189,17 +195,17 @@ void patchback(int sroot, request req, int branch){
 
 	struct tm tme;
 	time_t time;
+	printf("%s\n", expires);
 	if(expires!=NULL) strptime(expires, "%d %b %Y %H:%M:%S", &tme);
-	tme.tm_isdst=0;
+	//tme.tm_isdst=0;
 	time = mktime(&tme);
-	req.expires = (long)time;
+	req.expires = (long) time;
 	close(sroot);
 	fclose(file);
-	//check check
+	
 	if(strcmp(code,"304")!=0) {
-		printf("%s\n", code);
 		if(access( filename, F_OK ) != -1) if(remove(filename)!=0) printf("Cache: File delete error!\n");
-		if(rename("temp",filename)!=0) printf("Cache: File rename error!\n");
+		if(rename(str,filename)!=0) printf("Cache: File rename error!\n");
 	}
 	else printf("304 not modified\n");
 	if(nbytes < 0) {
@@ -219,7 +225,6 @@ void dispatch(int sroot, char *message, request req, int branch){
 		exit(1);
 	}
 	else patchback(sroot, req, branch);
-	memset(message,0,strlen(message));
 }
 
 void GETdressed(int sroot, request req, int branch){
@@ -227,7 +232,15 @@ void GETdressed(int sroot, request req, int branch){
 	if(resource==NULL) resource = "";
 	else if(resource[0]=='/') resource++;
 	char * message;
-	if(strncmp(req.accessed,"Never",4)!=0){
+	page* here = head;
+
+	while(here!=NULL){
+		if(!strcmp(here->req.address,req.address) && !strcmp(here->req.resource,req.resource)) {printf("Found"); break;}
+		here=here->next;
+	}
+	if(here) printf("%s\n",here->req.accessed );
+	if(here && strncmp(here->req.accessed,"Never",5)!=0){
+		printf("Found");
 		char *template = "GET /%s HTTP/1.0\r\nHost: %s\r\nUser-Agent: %s\r\nIf-Modified-Since: %s\r\n\r\n";
 		message = (char *)malloc(strlen(template)-6+strlen(req.address)+strlen(resource)+strlen("ECEN 602")+strlen(req.accessed));
 		sprintf(message, template, resource, req.address, "ECEN 602", req.accessed);
@@ -267,8 +280,6 @@ void getfor(request req, int branch){
 	GETdressed(sroot, req, branch);
 }
 
-//----
-
 void nexus(char const *target[]){
 	struct addrinfo hints, *servinfo, *p;
 	int rv, yes=1;
@@ -300,8 +311,8 @@ void nexus(char const *target[]){
 		fprintf(stderr, "server: failed to bind\n");
 		exit(EXIT_FAILURE);
 	}
-	freeaddrinfo(servinfo); // all done with this structure
-	if (listen(root, 10) == -1) {
+	freeaddrinfo(servinfo);
+	if (listen(root,20) == -1) {
 		perror("listen");
 		exit(EXIT_FAILURE);
 	}
@@ -327,7 +338,7 @@ request decode(char abuffer[]){
 	}
 	fixname(req.resource);
 	fixname(req.address);
-	req.expires=-1;
+	req.expires=0;
 	req.accessed="Never";
 	return req;
 }
