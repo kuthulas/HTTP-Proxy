@@ -16,9 +16,9 @@ void patchback(){
 	FILE *file = fopen("resource.html","w");
 	while((nbytes = recv(root, content, BUFSIZ, 0)) > 0) {
 		if(start==0) {
-			printf("%s\n", content);
 			bodystart = strstr(content, "\r\n\r\n");
 			if(bodystart!=NULL) {
+				printf("%s\n", content);
 				fprintf(file,"%s",bodystart+4);
 				start = 1;
 			}

@@ -132,13 +132,20 @@ int cachemanager(enum query q, request r){
 				time_t now;
 				time(&now);
 				struct tm *tme = gmtime(&now);
-				cachemanager(DELETE,r);
-				if(here->req.expires==0 || mktime(tme) >= here->req.expires) {printf("expired: %ld, %ld\n", mktime(tme), here->req.expires); return 1;}
+				
+				if(here->req.expires==0 || mktime(tme) >= here->req.expires) {
+					printf("expired: %ld, %ld\n", mktime(tme), here->req.expires);
+					cachemanager(DELETE,r);  
+					return 1;
+				}
 				else{
-					head->prev = here;
-					here->next = head;
-					here->prev = NULL;
-					head = here;
+					cachemanager(DELETE,r);
+					if(npages!=0){
+						head->prev = here;
+						here->next = head;
+						here->prev = NULL;
+						head = here;
+					}
 					return 0;
 				}
 			}
@@ -208,7 +215,10 @@ void patchback(int sroot, request req, int branch){
 		if(access( filename, F_OK ) != -1) if(remove(filename)!=0) printf("Cache: File delete error!\n");
 		if(rename(str,filename)!=0) printf("Cache: File rename error!\n");
 	}
-	else printf("304 not modified\n");
+	else {
+		printf("304 not modified\n");
+		serveto(req, branch);
+	}
 	if(nbytes < 0) {
 		perror("RECV Error!\n");
 		exit(0);
@@ -228,7 +238,7 @@ void dispatch(int sroot, char *message, request req, int branch){
 	else patchback(sroot, req, branch);
 }
 
-void GETdressed(int sroot, request req, int branch){
+void GETdressed(int sroot, request req, int branch, int status){
 	char *resource = req.resource;
 	if(resource==NULL) resource = "";
 	else if(resource[0]=='/') resource++;
@@ -239,9 +249,9 @@ void GETdressed(int sroot, request req, int branch){
 		if(!strcmp(here->req.address,req.address) && !strcmp(here->req.resource,req.resource)) {printf("Found"); break;}
 		here=here->next;
 	}
-	if(here) printf("%s\n",here->req.accessed );
-	if(here && strncmp(here->req.accessed,"Never",5)!=0){
-		printf("Found");
+	
+	if(status == 0 && here){
+		printf("CGET");
 		char *template = "GET /%s HTTP/1.0\r\nHost: %s\r\nUser-Agent: %s\r\nIf-Modified-Since: %s\r\n\r\n";
 		message = (char *)malloc(strlen(template)-6+strlen(req.address)+strlen(resource)+strlen("ECEN 602")+strlen(req.accessed));
 		sprintf(message, template, resource, req.address, "ECEN 602", req.accessed);
@@ -251,11 +261,10 @@ void GETdressed(int sroot, request req, int branch){
 		message = (char *)malloc(strlen(template)-5+strlen(req.address)+strlen(resource)+strlen("ECEN 602"));
 		sprintf(message, template, resource, req.address, "ECEN 602");
 	}
-
 	dispatch(sroot, message, req, branch);
 }
 
-void getfor(request req, int branch){
+void getfor(request req, int branch, int status){
 	int rv, sroot;
 	struct addrinfo hints, *servinfo, *p;
 	memset(&hints, 0, sizeof hints);
@@ -279,7 +288,7 @@ void getfor(request req, int branch){
 		break;
 	}
 	freeaddrinfo(servinfo);
-	GETdressed(sroot, req, branch);
+	GETdressed(sroot, req, branch, status);
 }
 
 void nexus(char const *target[]){
@@ -332,8 +341,7 @@ request decode(char abuffer[]){
 		if(strncmp(line,"GET",3)==0) {
 			char * getline = line+4;
 			getline[strlen(getline)-8] = '\0';
-			req.resource = malloc(strlen(getline));
-			strncpy(req.resource, getline, strlen(getline));
+			req.resource = getline;
 		}
 		else if(strncmp(line,"Host: ",5)==0) req.address = line+6;
 		token = strtok(NULL, "\r\n");
@@ -376,8 +384,8 @@ int main(int argc, char const *argv[]){
 						if((gold=read(c,abuffer,BUFSIZ))>0){
 							if(strncmp(abuffer,"GET",3)==0){
 								request req = decode(abuffer);
-								if(cachemanager(HITMISS,req)==0) serveto(req,c);
-								else getfor(req,c);
+								int status = cachemanager(HITMISS,req);
+								getfor(req,c,status);
 							}
 						}
 						else{
