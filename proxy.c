@@ -18,13 +18,12 @@ fd_set tree;
 typedef struct request{
 	char * address;
 	char * resource;
-	long expires;
+	time_t expires;
 	char * accessed;
 } request;
 
 typedef struct page{
 	request req;
-	char *modified;
 	struct page *next;
 	struct page *prev;
 } page;
@@ -133,7 +132,8 @@ int cachemanager(enum query q, request r){
 				time_t now;
 				time(&now);
 				struct tm *tme = gmtime(&now);
-				if(here->req.expires==0 || mktime(tme) >= here->req.expires) cachemanager(DELETE,r);
+				cachemanager(DELETE,r);
+				if(here->req.expires==0 || mktime(tme) >= here->req.expires) {printf("expired: %ld, %ld\n", mktime(tme), here->req.expires); return 1;}
 				else{
 					head->prev = here;
 					here->next = head;
@@ -195,11 +195,9 @@ void patchback(int sroot, request req, int branch){
 
 	struct tm tme;
 	bzero((void *)&tme, sizeof(struct tm));
-	time_t time;
 	if(expires!=NULL && strcmp(expires,"-1")!=0) {
 		strptime(expires, "%a, %d %b %Y %H:%M:%S %Z", &tme);
-		time = mktime(&tme);
-		req.expires = (long)time;
+		req.expires = mktime(&tme);
 	}
 	else req.expires = 0;
 	
@@ -253,7 +251,7 @@ void GETdressed(int sroot, request req, int branch){
 		message = (char *)malloc(strlen(template)-5+strlen(req.address)+strlen(resource)+strlen("ECEN 602"));
 		sprintf(message, template, resource, req.address, "ECEN 602");
 	}
-	
+
 	dispatch(sroot, message, req, branch);
 }
 
