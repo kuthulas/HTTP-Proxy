@@ -79,12 +79,12 @@ int cachemanager(enum query q, request r){
 		case INSERT:
 		here->req.address = r.address;
 		here->req.resource = r.resource;
-		here->req.expires = r.expires; // !
+		here->req.expires = r.expires;
 
 		time_t now;
 		time(&now);
-		struct tm *tme = gmtime(&now);		
-		char * buffer = malloc(80*sizeof(char));
+		struct tm *tme = localtime(&now);		
+		char * buffer = malloc(100*sizeof(char));
 		strftime(buffer, 80, "%a, %d %b %Y %H:%M:%S %Z",tme);
 		here->req.accessed = buffer;
 		if(head==NULL) {
@@ -107,7 +107,6 @@ int cachemanager(enum query q, request r){
 				here = here->next;
 			here->next = NULL;
 			npages = mpages;
-			printf("%d\n", npages);
 		}
 		return 0;
 		case DELETE:
@@ -131,16 +130,16 @@ int cachemanager(enum query q, request r){
 			{
 				time_t now;
 				time(&now);
-				struct tm *tme = gmtime(&now);
+				struct tm *tme = localtime(&now);
 				
 				if(here->req.expires==0 || mktime(tme) >= here->req.expires) {
-					printf("expired: %ld, %ld\n", mktime(tme), here->req.expires);
+					printf("Expired: Current:%ld, Expiry:%ld\n", mktime(tme), here->req.expires);
 					cachemanager(DELETE,r);  
 					return 1;
 				}
 				else{
-					cachemanager(DELETE,r);
-					if(npages!=0){
+					if(npages>1){
+						cachemanager(DELETE,r);
 						head->prev = here;
 						here->next = head;
 						here->prev = NULL;
@@ -155,7 +154,7 @@ int cachemanager(enum query q, request r){
 		case SHOW:
 		here = head;
 		while(here!=NULL){
-			printf(">> %s | %s | %lu | %s |\n", here->req.address, here->req.resource, here->req.expires, here->req.accessed);
+			printf("Cache >> \n %s | %s | %lu | %s |\n", here->req.address, here->req.resource, here->req.expires, here->req.accessed);
 			here = here->next;
 		}
 		return 0;
@@ -164,7 +163,7 @@ int cachemanager(enum query q, request r){
 	}
 }
 
-void patchback(int sroot, request req, int branch){
+void patchback(int sroot, request req, int branch, int status){
 	char * filename = malloc(strlen(req.address)+strlen(req.resource)+1);
 	url2filename(filename, req);
 	int nbytes;
@@ -216,26 +215,26 @@ void patchback(int sroot, request req, int branch){
 		if(rename(str,filename)!=0) printf("Cache: File rename error!\n");
 	}
 	else {
-		printf("304 not modified\n");
-		serveto(req, branch);
+		printf("304 Not Modified\n");
 	}
 	if(nbytes < 0) {
 		perror("RECV Error!\n");
 		exit(0);
 	}
 	else {
-		cachemanager(INSERT,req);
+		if(status==0) cachemanager(DELETE, req);
+ 		cachemanager(INSERT,req);
 		cachemanager(SHOW,req);
 		serveto(req, branch);
 	}
 }
 
-void dispatch(int sroot, char *message, request req, int branch){
+void dispatch(int sroot, char *message, request req, int branch, int status){
 	if((send(sroot, message, strlen(message), 0))==-1){
 		perror("GET Failed!");
 		exit(1);
 	}
-	else patchback(sroot, req, branch);
+	else patchback(sroot, req, branch, status);
 }
 
 void GETdressed(int sroot, request req, int branch, int status){
@@ -246,22 +245,21 @@ void GETdressed(int sroot, request req, int branch, int status){
 	page* here = head;
 
 	while(here!=NULL){
-		if(!strcmp(here->req.address,req.address) && !strcmp(here->req.resource,req.resource)) {printf("Found"); break;}
+		if(!strcmp(here->req.address,req.address) && !strcmp(here->req.resource,req.resource)) break;
 		here=here->next;
 	}
 	
 	if(status == 0 && here){
-		printf("CGET");
 		char *template = "GET /%s HTTP/1.0\r\nHost: %s\r\nUser-Agent: %s\r\nIf-Modified-Since: %s\r\n\r\n";
 		message = (char *)malloc(strlen(template)-6+strlen(req.address)+strlen(resource)+strlen("ECEN 602")+strlen(req.accessed));
-		sprintf(message, template, resource, req.address, "ECEN 602", req.accessed);
+		sprintf(message, template, resource, req.address, "ECEN 602", here->req.accessed);
 	}
 	else{
 		char *template = "GET /%s HTTP/1.0\r\nHost: %s\r\nUser-Agent: %s\r\n\r\n";
 		message = (char *)malloc(strlen(template)-5+strlen(req.address)+strlen(resource)+strlen("ECEN 602"));
 		sprintf(message, template, resource, req.address, "ECEN 602");
 	}
-	dispatch(sroot, message, req, branch);
+	dispatch(sroot, message, req, branch, status);
 }
 
 void getfor(request req, int branch, int status){
