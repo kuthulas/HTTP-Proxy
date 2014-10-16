@@ -44,6 +44,7 @@ void dispatch(char *message){
 }
 
 void GETdressed(const char *url){
+	if(strncmp(url,"http://",7)==0) url+=7;
 	char urld[strlen(url)];
 	strcpy(urld,url);
 	char *resource = strstr(url,"/");
