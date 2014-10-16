@@ -73,7 +73,7 @@ void serveto(request req, int branch){
 int cachemanager(enum query q, request r){
 	page *here;
 	here = (page *)malloc(sizeof(page));
-	
+	printf("B\n");
 	page *temp1,*temp2;
 	switch(q){
 		case INSERT:
@@ -134,23 +134,25 @@ int cachemanager(enum query q, request r){
 				
 				if(here->req.expires==0 || mktime(tme) >= here->req.expires) {
 					printf("Expired: Current:%ld, Expiry:%ld\n", mktime(tme), here->req.expires);
-					cachemanager(DELETE,r);  
+					temp1 = here->prev;
+					temp2 = here->next;
+					if(temp1!=NULL)temp1->next = temp2; else head = temp2;
+					if(temp2!=NULL)temp2->prev = temp1;
+					npages--;  
 					return 1;
 				}
 				else{
-					if(npages>1){
-						cachemanager(DELETE,r);
-						head->prev = here;
-						here->next = head;
-						here->prev = NULL;
-						head = here;
-					}
+					temp1 = here->prev;
+					temp2 = here->next;
+					if(temp1!=NULL)temp1->next = temp2; else head = temp2;
+					if(temp2!=NULL)temp2->prev = temp1;
+					npages--;  
 					return 0;
 				}
 			}
 			here = here->next;
 		}
-		return 1;
+		return 2;
 		case SHOW:
 		here = head;
 		while(here!=NULL){
@@ -206,24 +208,24 @@ void patchback(int sroot, request req, int branch, int status){
 		req.expires = mktime(&tme);
 	}
 	else req.expires = 0;
-	
+
 	close(sroot);
 	fclose(file);
 
-	if(strcmp(code,"304")!=0) {
-		if(access( filename, F_OK ) != -1) if(remove(filename)!=0) printf("Cache: File delete error!\n");
-		if(rename(str,filename)!=0) printf("Cache: File rename error!\n");
-	}
-	else {
-		printf("304 Not Modified\n");
-	}
 	if(nbytes < 0) {
 		perror("RECV Error!\n");
 		exit(0);
 	}
 	else {
-		if(status==0) cachemanager(DELETE, req);
- 		cachemanager(INSERT,req);
+		if(strcmp(code,"304")!=0) {
+			if(access( filename, F_OK ) != -1) if(remove(filename)!=0) printf("Cache: File delete error!\n");
+			if(rename(str,filename)!=0) printf("Cache: File rename error!\n");
+		}
+		else {
+			printf(">> 304\n");
+		}
+
+		cachemanager(INSERT, req);
 		cachemanager(SHOW,req);
 		serveto(req, branch);
 	}
@@ -248,8 +250,8 @@ void GETdressed(int sroot, request req, int branch, int status){
 		if(!strcmp(here->req.address,req.address) && !strcmp(here->req.resource,req.resource)) break;
 		here=here->next;
 	}
-	
-	if(status == 0 && here){
+
+	if(status == 0 && here!=NULL){
 		char *template = "GET /%s HTTP/1.0\r\nHost: %s\r\nUser-Agent: %s\r\nIf-Modified-Since: %s\r\n\r\n";
 		message = (char *)malloc(strlen(template)-6+strlen(req.address)+strlen(resource)+strlen("ECEN 602")+strlen(req.accessed));
 		sprintf(message, template, resource, req.address, "ECEN 602", here->req.accessed);
