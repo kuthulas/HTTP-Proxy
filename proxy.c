@@ -66,17 +66,18 @@ void serveto(request req, int branch){
 			}
 		}
 	}
+	fclose(file);
 	FD_CLR(branch,&tree);
 	close(branch);
 }
 
 int cachemanager(enum query q, request r){
 	page *here;
-	here = (page *)malloc(sizeof(page));
-	printf("B\n");
 	page *temp1,*temp2;
+
 	switch(q){
 		case INSERT:
+		here = (page *)malloc(sizeof(page));
 		here->req.address = r.address;
 		here->req.resource = r.resource;
 		here->req.expires = r.expires;
@@ -87,6 +88,7 @@ int cachemanager(enum query q, request r){
 		char * buffer = malloc(100*sizeof(char));
 		strftime(buffer, 80, "%a, %d %b %Y %H:%M:%S %Z",tme);
 		here->req.accessed = buffer;
+
 		if(head==NULL) {
 			here->next = NULL;
 			here->prev = NULL;
@@ -118,35 +120,31 @@ int cachemanager(enum query q, request r){
 				if(temp1!=NULL)temp1->next = temp2; else head = temp2;
 				if(temp2!=NULL)temp2->prev = temp1;
 				npages--;
-				return 0;
+				break;
 			}
 			here = here->next;
 		}
-		return 1;
 		case HITMISS:
 		here = head;
 		while(here!=NULL){
 			if(!strcmp(here->req.address,r.address) && !strcmp(here->req.resource,r.resource))
 			{
+				printf("Cache Hit!\n");
 				time_t now;
 				time(&now);
 				struct tm *tme = localtime(&now);
-				
-				if(here->req.expires==0 || mktime(tme) >= here->req.expires) {
+
+				if(mktime(tme) >= here->req.expires) {
 					printf("Expired: Current:%ld, Expiry:%ld\n", mktime(tme), here->req.expires);
 					temp1 = here->prev;
 					temp2 = here->next;
 					if(temp1!=NULL)temp1->next = temp2; else head = temp2;
 					if(temp2!=NULL)temp2->prev = temp1;
-					npages--;  
+					npages--;
 					return 1;
 				}
 				else{
-					temp1 = here->prev;
-					temp2 = here->next;
-					if(temp1!=NULL)temp1->next = temp2; else head = temp2;
-					if(temp2!=NULL)temp2->prev = temp1;
-					npages--;  
+					printf("Not expired!\n"); 
 					return 0;
 				}
 			}
@@ -173,7 +171,8 @@ void patchback(int sroot, request req, int branch, int status){
 	int isexpire=0;
 	char *code = NULL;
 	char *expires = NULL;
-	char *token;
+	char *token1 = NULL;
+	char *token2 = NULL;
 
 	char content[BUFSIZ];
 	memset(content,0,BUFSIZ);
@@ -182,25 +181,25 @@ void patchback(int sroot, request req, int branch, int status){
 	FILE *file = fopen(str,"w");
 	while((nbytes = recv(sroot, content, BUFSIZ, 0)) > 0) {
 		if(iscode==0){
-			token = strtok(strdup(content),"\r\n");
-			*(token+12)='\0';
-			code=token+9;
+			token1 = strtok(strdup(content),"\r\n");
+			*(token1+12)='\0';
+			code=token1+9;
 			iscode=1;
 		}
 		if(isexpire==0){
-			token = strtok(strdup(content),"\r\n");
-			while(token!=NULL){
-				if(strncmp(token, "Expires: ", 9)==0) {
-					expires = token+9;
+			token2 = strtok(strdup(content),"\r\n");
+			while(token2!=NULL){
+				if(strncmp(token2, "Expires: ", 9)==0) {
+					expires = token2+9;
 					isexpire = 1;
 				}
-				token = strtok(NULL, "\r\n");
+				token2 = strtok(NULL, "\r\n");
 			}
 		}
 		fprintf(file,"%s",content);
 		memset(content, 0, BUFSIZ);
 	}
-
+	fclose(file);
 	struct tm tme;
 	bzero((void *)&tme, sizeof(struct tm));
 	if(expires!=NULL && strcmp(expires,"-1")!=0) {
@@ -210,8 +209,8 @@ void patchback(int sroot, request req, int branch, int status){
 	else req.expires = 0;
 
 	close(sroot);
-	fclose(file);
-
+	
+	printf("Received: %s\n", code);
 	if(nbytes < 0) {
 		perror("RECV Error!\n");
 		exit(0);
@@ -222,11 +221,9 @@ void patchback(int sroot, request req, int branch, int status){
 			if(rename(str,filename)!=0) printf("Cache: File rename error!\n");
 		}
 		else {
-			printf(">> 304\n");
+			cachemanager(DELETE,req);
 		}
-
-		cachemanager(INSERT, req);
-		cachemanager(SHOW,req);
+		cachemanager(INSERT,req);
 		serveto(req, branch);
 	}
 }
@@ -245,21 +242,24 @@ void GETdressed(int sroot, request req, int branch, int status){
 	else if(resource[0]=='/') resource++;
 	char * message;
 	page* here = head;
-
+	
 	while(here!=NULL){
 		if(!strcmp(here->req.address,req.address) && !strcmp(here->req.resource,req.resource)) break;
 		here=here->next;
 	}
 
+	printf("status %d\n", status);
 	if(status == 0 && here!=NULL){
+		printf("Conditional GET\n");
 		char *template = "GET /%s HTTP/1.0\r\nHost: %s\r\nUser-Agent: %s\r\nIf-Modified-Since: %s\r\n\r\n";
-		message = (char *)malloc(strlen(template)-6+strlen(req.address)+strlen(resource)+strlen("ECEN 602")+strlen(req.accessed));
-		sprintf(message, template, resource, req.address, "ECEN 602", here->req.accessed);
+		message = (char *)malloc(strlen(template)+6+strlen(req.address)+strlen(resource)+strlen("ECEN602")+strlen(req.accessed));
+		sprintf(message, template, resource, req.address, "ECEN602", here->req.accessed);
 	}
 	else{
+		printf("GET\n");
 		char *template = "GET /%s HTTP/1.0\r\nHost: %s\r\nUser-Agent: %s\r\n\r\n";
-		message = (char *)malloc(strlen(template)-5+strlen(req.address)+strlen(resource)+strlen("ECEN 602"));
-		sprintf(message, template, resource, req.address, "ECEN 602");
+		message = (char *)malloc(strlen(template)-5+strlen(req.address)+strlen(resource)+strlen("ECEN602"));
+		sprintf(message, template, resource, req.address, "ECEN602");
 	}
 	dispatch(sroot, message, req, branch, status);
 }
@@ -323,7 +323,7 @@ void nexus(char const *target[]){
 		exit(EXIT_FAILURE);
 	}
 	freeaddrinfo(servinfo);
-	if (listen(root,20) == -1) {
+	if (listen(root,12) == -1) {
 		perror("listen");
 		exit(EXIT_FAILURE);
 	}
@@ -384,6 +384,8 @@ int main(int argc, char const *argv[]){
 						if((gold=read(c,abuffer,BUFSIZ))>0){
 							if(strncmp(abuffer,"GET",3)==0){
 								request req = decode(abuffer);
+								printf("Address: %s\n", req.address);
+								printf("Resource: %s\n", req.resource);
 								int status = cachemanager(HITMISS,req);
 								getfor(req,c,status);
 							}
