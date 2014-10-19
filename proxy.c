@@ -83,7 +83,7 @@ int cachemanager(enum query q, request r){
 
 		time_t now;
 		time(&now);
-		struct tm *tme = localtime(&now);		
+		struct tm *tme = gmtime(&now);		
 		char * buffer = malloc(100*sizeof(char));
 		strftime(buffer, 80, "%a, %d %b %Y %H:%M:%S %Z",tme);
 		printf("- Time: %s\n", buffer);
@@ -129,13 +129,14 @@ int cachemanager(enum query q, request r){
 		while(here!=NULL){
 			if(!strcmp(here->req.address,r.address) && !strcmp(here->req.resource,r.resource))
 			{
-				printf("- Cache Hit!");
 				time_t now;
 				time(&now);
-				struct tm *tme = localtime(&now);
+				struct tm *tme = gmtime(&now);
 
-				if(mktime(tme) >= here->req.expires) {
-					printf("- Expired: Current:%ld, Expiry:%ld\n", mktime(tme), here->req.expires);
+				printf("Cache Hit!");
+				
+				if(mktime(tme) > here->req.expires) {
+					printf("- Expired!");
 					temp1 = here->prev;
 					temp2 = here->next;
 					if(temp1!=NULL)temp1->next = temp2; else head = temp2;
@@ -192,6 +193,7 @@ void patchback(int sroot, request req, int branch, int status){
 				if(strncmp(token2, "Expires: ", 9)==0) {
 					expires = token2+9;
 					isexpire = 1;
+					break;
 				}
 				token2 = strtok(NULL, "\r\n");
 			}
@@ -202,6 +204,7 @@ void patchback(int sroot, request req, int branch, int status){
 	fclose(file);
 	struct tm tme;
 	bzero((void *)&tme, sizeof(struct tm));
+	printf("< Expires: %s\n", expires);
 	if(expires!=NULL && strcmp(expires,"-1")!=0) {
 		strptime(expires, "%a, %d %b %Y %H:%M:%S %Z", &tme);
 		req.expires = mktime(&tme);
@@ -220,9 +223,8 @@ void patchback(int sroot, request req, int branch, int status){
 			if(access( filename, F_OK ) != -1) if(remove(filename)!=0) printf("Cache: File delete error!\n");
 			if(rename(str,filename)!=0) printf("Cache: File rename error!\n");
 		}
-		else {
-			cachemanager(DELETE,req);
-		}
+		
+		if(status==0) cachemanager(DELETE,req);
 		cachemanager(INSERT,req);
 		serveto(req, branch);
 		printf("> Page served!\n");
