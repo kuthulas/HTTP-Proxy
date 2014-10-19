@@ -175,7 +175,7 @@ void patchback(int sroot, request req, int branch, int status){
 
 	char content[BUFSIZ];
 	memset(content,0,BUFSIZ);
-	char *str[10];
+	char str[10];
 	sprintf(str,"temp%d",branch);
 	FILE *file = fopen(str,"w");
 	while((nbytes = recv(sroot, content, BUFSIZ, 0)) > 0) {
