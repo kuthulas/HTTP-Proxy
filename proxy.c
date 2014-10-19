@@ -255,7 +255,7 @@ void GETdressed(int sroot, request req, int branch, int status){
 	if(status == 0 && here!=NULL){
 		printf("> Issuing Conditional GET\n");
 		char *template = "GET /%s HTTP/1.0\r\nHost: %s\r\nUser-Agent: %s\r\nIf-Modified-Since: %s\r\n\r\n";
-		message = (char *)malloc(strlen(template)+6+strlen(req.address)+strlen(resource)+strlen("ECEN602")+strlen(req.accessed));
+		message = (char *)malloc(strlen(template)+strlen(req.address)+strlen(resource)+strlen("ECEN602")+strlen(here->req.accessed));
 		sprintf(message, template, resource, req.address, "ECEN602", here->req.accessed);
 	}
 	else{
