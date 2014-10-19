@@ -86,6 +86,7 @@ int cachemanager(enum query q, request r){
 		struct tm *tme = localtime(&now);		
 		char * buffer = malloc(100*sizeof(char));
 		strftime(buffer, 80, "%a, %d %b %Y %H:%M:%S %Z",tme);
+		printf("- Time: %s\n", buffer);
 		here->req.accessed = buffer;
 
 		if(head==NULL) {
@@ -128,13 +129,13 @@ int cachemanager(enum query q, request r){
 		while(here!=NULL){
 			if(!strcmp(here->req.address,r.address) && !strcmp(here->req.resource,r.resource))
 			{
-				printf("Cache Hit!\n");
+				printf("- Cache Hit!");
 				time_t now;
 				time(&now);
 				struct tm *tme = localtime(&now);
 
 				if(mktime(tme) >= here->req.expires) {
-					printf("Expired: Current:%ld, Expiry:%ld\n", mktime(tme), here->req.expires);
+					printf("- Expired: Current:%ld, Expiry:%ld\n", mktime(tme), here->req.expires);
 					temp1 = here->prev;
 					temp2 = here->next;
 					if(temp1!=NULL)temp1->next = temp2; else head = temp2;
@@ -143,7 +144,7 @@ int cachemanager(enum query q, request r){
 					return 1;
 				}
 				else{
-					printf("Not expired!\n"); 
+					printf("- Not expired!\n"); 
 					return 0;
 				}
 			}
@@ -209,7 +210,7 @@ void patchback(int sroot, request req, int branch, int status){
 
 	close(sroot);
 	
-	printf("Received: %s\n", code);
+	printf("< Received: %s\n", code);
 	if(nbytes < 0) {
 		perror("RECV Error!\n");
 		exit(0);
@@ -224,6 +225,8 @@ void patchback(int sroot, request req, int branch, int status){
 		}
 		cachemanager(INSERT,req);
 		serveto(req, branch);
+		printf("> Page served!\n");
+		printf("-----------------------------------------------\n");
 	}
 }
 
@@ -247,15 +250,14 @@ void GETdressed(int sroot, request req, int branch, int status){
 		here=here->next;
 	}
 
-	printf("status %d\n", status);
 	if(status == 0 && here!=NULL){
-		printf("Conditional GET\n");
+		printf("> Issuing Conditional GET\n");
 		char *template = "GET /%s HTTP/1.0\r\nHost: %s\r\nUser-Agent: %s\r\nIf-Modified-Since: %s\r\n\r\n";
 		message = (char *)malloc(strlen(template)+6+strlen(req.address)+strlen(resource)+strlen("ECEN602")+strlen(req.accessed));
 		sprintf(message, template, resource, req.address, "ECEN602", here->req.accessed);
 	}
 	else{
-		printf("GET\n");
+		printf("> Issuing GET\n");
 		char *template = "GET /%s HTTP/1.0\r\nHost: %s\r\nUser-Agent: %s\r\n\r\n";
 		message = (char *)malloc(strlen(template)-5+strlen(req.address)+strlen(resource)+strlen("ECEN602"));
 		sprintf(message, template, resource, req.address, "ECEN602");
@@ -384,8 +386,9 @@ int main(int argc, char const *argv[]){
 							if(strncmp(abuffer,"GET",3)==0){
 								request req = decode(abuffer);
 								printf("Address: %s\n", req.address);
-								printf("Resource: %s\n", req.resource);
+								printf("Resource: %s\n\n", req.resource);
 								int status = cachemanager(HITMISS,req);
+								if(status==2) printf("- Cache Miss!\n");
 								getfor(req,c,status);
 							}
 						}
