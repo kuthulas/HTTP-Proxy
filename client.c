@@ -50,11 +50,12 @@ void GETdressed(const char *url){
 	if(strncmp(url,"https://",8)==0) url+=8;
 	char urld[strlen(url)];
 	strcpy(urld,url);
-	char *resource = strstr(url,"/");
-	if(resource==NULL) resource = "";
-	else if(resource[0]=='/') resource++;
+	const char *resource = strstr(url,"/");
+	if(resource==NULL) resource = url; 
+	else if(resource[0]=='/') resource++; 
 	char filename[strlen(resource)];
 	memcpy(filename, resource, strlen(resource));
+	filename[strlen(resource)]='\0';
 	char *address = strtok(urld,"/");
 	char *template = "GET /%s HTTP/1.0\r\nHost: %s\r\nUser-Agent: %s\r\n\r\n";
 	char *message = (char *)malloc(strlen(template)-5+strlen(address)+strlen(resource)+strlen("ECEN 602"));
