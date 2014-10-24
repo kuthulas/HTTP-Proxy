@@ -8,24 +8,25 @@
 
 int root;
 
+// Listen back from the server
 void patchback(char filename[]){
 	int nbytes;
 	int start=0;
 	char content[BUFSIZ];
 	memset(content,0,BUFSIZ);
 	char *bodystart = NULL;
-	char *name = basename(filename);
+	char *name = basename(filename); // Filename to save the file locally
 	if(strcmp(name,"")==0) name = "index.html";
 	FILE *file = fopen(name,"w");
 	while((nbytes = recv(root, content, BUFSIZ, 0)) > 0) {
-		if(start==0) {
+		if(start==0) { // Remove header from the received HTTP message
 			bodystart = strstr(content, "\r\n\r\n");
 			if(bodystart!=NULL) {
 				fprintf(file,"%s",bodystart+4);
 				start = 1;
 			}
 		}
-		else fprintf(file,"%s",content);
+		else fprintf(file,"%s",content); // Save just the body
 		memset(content, 0, BUFSIZ);
 	}
 	close(root);
@@ -37,6 +38,7 @@ void patchback(char filename[]){
 	else printf("GET Success! Saved in %s\n", name);
 }
 
+// Send message to proxy server
 void dispatch(char *message, char filename[]){
 	if((send(root, message, strlen(message), 0))==-1){
 		perror("GET Failed!");
@@ -45,6 +47,7 @@ void dispatch(char *message, char filename[]){
 	else patchback(filename);
 }
 
+// Format the GET message using command-line input parameters
 void GETdressed(const char *url){
 	if(strncmp(url,"http://",7)==0) url+=7;
 	if(strncmp(url,"https://",8)==0) url+=8;
@@ -63,6 +66,7 @@ void GETdressed(const char *url){
 	dispatch(message, filename);
 }
 
+// Make connection to proxy server
 void nexus(char const *target[]){
 	int rv;
 	struct addrinfo hints, *servinfo, *p;

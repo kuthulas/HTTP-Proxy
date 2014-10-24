@@ -15,14 +15,14 @@ int npages=0;
 int mpages=10;
 fd_set tree;
 
-typedef struct request{
+typedef struct request{ // To store request parameters from the client
 	char * address;
 	char * resource;
 	time_t expires;
 	char * accessed;
 } request;
 
-typedef struct page{
+typedef struct page{ // Cache entry structure
 	request req;
 	struct page *next;
 	struct page *prev;
@@ -30,6 +30,7 @@ typedef struct page{
 
 page *head = NULL;
 
+// To remove blanks from strings
 void fixname(char * filename){
 	char* x = filename;
 	char* y = filename;
@@ -40,6 +41,7 @@ void fixname(char * filename){
 	*x=0;
 }
 
+// Convert request URL to string that can be used as filename in UNIX
 void url2filename(char * filename, request req){
 	char resource[strlen(req.resource)];
 	int i;
@@ -54,6 +56,7 @@ void url2filename(char * filename, request req){
 	fixname(filename);
 }
 
+// Serve requested page downloaded from the server to the client
 void serveto(request req, int branch){
 	char * filename = malloc(strlen(req.address)+strlen(req.resource)+1);
 	char buffer[BUFSIZ];
@@ -70,12 +73,13 @@ void serveto(request req, int branch){
 	close(branch);
 }
 
+// LRU cache manager
 int cachemanager(enum query q, request r){
 	page *here;
 	page *temp1,*temp2;
 
 	switch(q){
-		case INSERT:
+		case INSERT: // Insert a page to the top of the cache
 		here = (page *)malloc(sizeof(page));
 		here->req.address = r.address;
 		here->req.resource = r.resource;
@@ -87,14 +91,14 @@ int cachemanager(enum query q, request r){
 		char * buffer = malloc(100*sizeof(char));
 		strftime(buffer, 80, "%a, %d %b %Y %H:%M:%S %Z",tme);
 		printf("- Time: %s\n", buffer);
-		here->req.accessed = buffer;
+		here->req.accessed = buffer; // Make last-accessed time = current time
 
 		if(head==NULL) {
 			here->next = NULL;
 			here->prev = NULL;
 			head=here;
 		}
-		else{
+		else{ // Push node to top
 			head->prev = here;
 			here->next = head;
 			here->prev = NULL;
@@ -102,7 +106,7 @@ int cachemanager(enum query q, request r){
 		}
 		npages++;
 
-		if(npages==mpages+1){
+		if(npages==mpages+1){ // Max limit for the cache is hit; delete the LRU entry
 			here=head;
 			int h;
 			for(h=0;h<mpages-1;h++)
@@ -111,7 +115,7 @@ int cachemanager(enum query q, request r){
 			npages = mpages;
 		}
 		return 0;
-		case DELETE:
+		case DELETE: // Delete a page in cache
 		here = head;
 		while(here!=NULL){
 			if(!strcmp(here->req.address,r.address) && !strcmp(here->req.resource,r.resource)){
@@ -127,7 +131,7 @@ int cachemanager(enum query q, request r){
 		case HITMISS:
 		here = head;
 		while(here!=NULL){
-			if(!strcmp(here->req.address,r.address) && !strcmp(here->req.resource,r.resource))
+			if(!strcmp(here->req.address,r.address) && !strcmp(here->req.resource,r.resource)) // Cache Hit
 			{
 				time_t now;
 				time(&now);
@@ -135,7 +139,7 @@ int cachemanager(enum query q, request r){
 
 				printf("Cache Hit!");
 				
-				if(mktime(tme) > here->req.expires) {
+				if(mktime(tme) > here->req.expires) { // Expired
 					printf("- Expired!");
 					temp1 = here->prev;
 					temp2 = here->next;
@@ -144,15 +148,15 @@ int cachemanager(enum query q, request r){
 					npages--;
 					return 1;
 				}
-				else{
+				else{ // Not expired
 					printf("- Not expired!\n"); 
 					return 0;
 				}
 			}
 			here = here->next;
 		}
-		return 2;
-		case SHOW:
+		return 2; // Cache Miss
+		case SHOW: // Print the cache entries
 		here = head;
 		while(here!=NULL){
 			printf("Cache >> \n %s | %s | %lu | %s |\n", here->req.address, here->req.resource, here->req.expires, here->req.accessed);
@@ -164,6 +168,7 @@ int cachemanager(enum query q, request r){
 	}
 }
 
+// Listen back from the actual HTTP server
 void patchback(int sroot, request req, int branch, int status){
 	char * filename = malloc(strlen(req.address)+strlen(req.resource)+1);
 	url2filename(filename, req);
@@ -178,7 +183,7 @@ void patchback(int sroot, request req, int branch, int status){
 	char content[BUFSIZ];
 	memset(content,0,BUFSIZ);
 	char str[10];
-	sprintf(str,"temp%d",branch);
+	sprintf(str,"temp%d",branch); // Temporary file
 	FILE *file = fopen(str,"w");
 	while((nbytes = recv(sroot, content, BUFSIZ, 0)) > 0) {
 		if(iscode==0){
@@ -219,8 +224,8 @@ void patchback(int sroot, request req, int branch, int status){
 		exit(0);
 	}
 	else {
-		if(strcmp(code,"304")!=0) {
-			if(access( filename, F_OK ) != -1) if(remove(filename)!=0) printf("Cache: File delete error!\n");
+		if(strcmp(code,"304")!=0) { // Response code not 304
+			if(access( filename, F_OK ) != -1) if(remove(filename)!=0) printf("Cache: File delete error!\n"); // Save file only if response != 304
 			if(rename(str,filename)!=0) printf("Cache: File rename error!\n");
 		}
 		
@@ -232,6 +237,7 @@ void patchback(int sroot, request req, int branch, int status){
 	}
 }
 
+// Routine to send the HTTP message over open socket
 void dispatch(int sroot, char *message, request req, int branch, int status){
 	if((send(sroot, message, strlen(message), 0))==-1){
 		perror("GET Failed!");
@@ -240,6 +246,7 @@ void dispatch(int sroot, char *message, request req, int branch, int status){
 	else patchback(sroot, req, branch, status);
 }
 
+ // Prepare the GET message with the request parameters
 void GETdressed(int sroot, request req, int branch, int status){
 	char *resource = req.resource;
 	if(resource==NULL) resource = "";
@@ -247,18 +254,18 @@ void GETdressed(int sroot, request req, int branch, int status){
 	char * message;
 	page* here = head;
 	
-	while(here!=NULL){
+	while(here!=NULL){ // Finding last-accessed time for the requested page in cache
 		if(!strcmp(here->req.address,req.address) && !strcmp(here->req.resource,req.resource)) break;
 		here=here->next;
 	}
 
-	if(status == 0 && here!=NULL){
+	if(status == 0 && here!=NULL){ // Conditional GET message preparation
 		printf("> Issuing Conditional GET\n");
 		char *template = "GET /%s HTTP/1.0\r\nHost: %s\r\nUser-Agent: %s\r\nIf-Modified-Since: %s\r\n\r\n";
 		message = (char *)malloc(strlen(template)+strlen(req.address)+strlen(resource)+strlen("ECEN602")+strlen(here->req.accessed));
 		sprintf(message, template, resource, req.address, "ECEN602", here->req.accessed);
 	}
-	else{
+	else{ // GET message preparation
 		printf("> Issuing GET\n");
 		char *template = "GET /%s HTTP/1.0\r\nHost: %s\r\nUser-Agent: %s\r\n\r\n";
 		message = (char *)malloc(strlen(template)-5+strlen(req.address)+strlen(resource)+strlen("ECEN602"));
@@ -267,6 +274,7 @@ void GETdressed(int sroot, request req, int branch, int status){
 	dispatch(sroot, message, req, branch, status);
 }
 
+// Initiate request processing; creates socket to server to download page
 void getfor(request req, int branch, int status){
 	int rv, sroot;
 	struct addrinfo hints, *servinfo, *p;
@@ -293,7 +301,7 @@ void getfor(request req, int branch, int status){
 	freeaddrinfo(servinfo);
 	GETdressed(sroot, req, branch, status);
 }
-
+//Listen socket initialization for the proxy server
 void nexus(char const *target[]){
 	struct addrinfo hints, *servinfo, *p;
 	int rv, yes=1;
@@ -332,7 +340,7 @@ void nexus(char const *target[]){
 	}
 	FD_SET(root, &tree);
 }
-
+//Decode & Parse the HTTP message obtained from the client
 request decode(char abuffer[]){
 	char *token;
 	token = strtok(strdup(abuffer),"\r\n");
@@ -351,7 +359,7 @@ request decode(char abuffer[]){
 	}
 	fixname(req.resource);
 	fixname(req.address);
-	req.expires=0;
+	req.expires=0; // Default params; modified later
 	req.accessed="Never";
 	return req;
 }
@@ -389,16 +397,16 @@ int main(int argc, char const *argv[]){
 								request req = decode(abuffer);
 								printf("Address: %s\n", req.address);
 								printf("Resource: %s\n\n", req.resource);
-								int status = cachemanager(HITMISS,req);
-								if(status==2) printf("- Cache Miss!\n");
-								getfor(req,c,status);
+								int status = cachemanager(HITMISS,req); // Detect hit status of the requested page in the cache
+								if(status==2) printf("- Cache Miss!\n"); // status = 0 for hit and not expired.
+								getfor(req,c,status); // Process the request
 							}
 						}
 						else{
 							if(gold==0) printf("Offline.\n");
 							else perror("recv");
 							close(c);
-							FD_CLR(branch,&tree);
+							FD_CLR(branch,&tree); // Clean-up
 						}
 					}
 				}
