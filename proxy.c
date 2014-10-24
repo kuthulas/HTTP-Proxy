@@ -59,12 +59,12 @@ void url2filename(char * filename, request req){
 // Serve requested page downloaded from the server to the client
 void serveto(request req, int branch){
 	char * filename = malloc(strlen(req.address)+strlen(req.resource)+1);
-	char buffer[BUFSIZ];
+	int buffer;
 	url2filename(filename, req);
-	FILE *file = fopen(filename, "r");
+	FILE *file = fopen(filename, "rb");
 	if(file!=NULL){
-		while(fread(buffer,1,BUFSIZ,file)>0){
-			if((send(branch, buffer, strlen(buffer), 0))==-1){
+		while(fread(&buffer,1,1,file)>0){
+			if((send(branch, &buffer, 1, 0))==-1){
 				perror("Serve failed!");
 			}
 		}
@@ -184,7 +184,7 @@ void patchback(int sroot, request req, int branch, int status){
 	memset(content,0,BUFSIZ);
 	char str[10];
 	sprintf(str,"temp%d",branch); // Temporary file
-	FILE *file = fopen(str,"w");
+	FILE *file = fopen(str,"wb");
 	while((nbytes = recv(sroot, content, BUFSIZ, 0)) > 0) {
 		if(iscode==0){
 			token1 = strtok(strdup(content),"\r\n");
@@ -203,9 +203,10 @@ void patchback(int sroot, request req, int branch, int status){
 				token2 = strtok(NULL, "\r\n");
 			}
 		}
-		fprintf(file,"%s",content);
+		fwrite(content,1,nbytes,file);
 		memset(content, 0, BUFSIZ);
 	}
+
 	fclose(file);
 	struct tm tme;
 	bzero((void *)&tme, sizeof(struct tm));
