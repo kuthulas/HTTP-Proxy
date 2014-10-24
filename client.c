@@ -12,22 +12,40 @@ int root;
 void patchback(char filename[]){
 	int nbytes;
 	int start=0;
-	char content[BUFSIZ];
-	memset(content,0,BUFSIZ);
-	char *bodystart = NULL;
+	int content;
+	char *buffer = malloc(2048*sizeof(char));
+	int index=0;
+	int iscode = 0;
+	char *code;
+	char * token;
 	char *name = basename(filename); // Filename to save the file locally
+
 	if(strcmp(name,"")==0) name = "index.html";
-	FILE *file = fopen(name,"w");
-	while((nbytes = recv(root, content, BUFSIZ, 0)) > 0) {
-		if(start==0) { // Remove header from the received HTTP message
-			bodystart = strstr(content, "\r\n\r\n");
-			if(bodystart!=NULL) {
-				fprintf(file,"%s",bodystart+4);
-				start = 1;
+	FILE *file = fopen(name,"wb");
+	while((nbytes = recv(root, &content, 1, 0)) > 0) {
+		if(start<4) { // Remove header from the received HTTP message
+			sprintf(buffer+index,"%c",(char)content);
+			index++;
+			buffer[index]='\0';
+			if(content==13) {
+				if(start==0 || start==2) start++;
 			}
+			else if(content==10) 
+			{
+				if(start==1 || start==3) start++;
+			}
+			else {start=0;}
 		}
-		else fprintf(file,"%s",content); // Save just the body
-		memset(content, 0, BUFSIZ);
+		else {
+			if(iscode==0){
+			token = strtok(strdup(buffer),"\r\n");
+			*(token+12)='\0';
+			code=token+9;
+			printf("< Response code: %s\n\n", code);
+			iscode=1;
+		}
+			fwrite((char *)&content,1,1,file); // Save just the body
+		}
 	}
 	close(root);
 	fclose(file);
@@ -63,6 +81,7 @@ void GETdressed(const char *url){
 	char *template = "GET /%s HTTP/1.0\r\nHost: %s\r\nUser-Agent: %s\r\n\r\n";
 	char *message = (char *)malloc(strlen(template)-5+strlen(address)+strlen(resource)+strlen("ECEN 602"));
 	sprintf(message, template, resource, address, "ECEN 602");
+	printf("> GET\n");
 	dispatch(message, filename);
 }
 
